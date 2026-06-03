@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # 1. Machine Learning / Training Model Service
+  train-model:
+    build: ./Train_model
+    container_name: train_model_container
+    # If the training model needs to store models or data persistently:
+    volumes:
+      - ./Train_model/models:/app/models
+    # If it exposes an API (e.g. FastAPI / Flask for inference)
+    ports:
+      - "5000:5000"
+
+  # 2. Backend Service (e.g., Node.js, Python, Go)
+  backend:
+    build: ./BackEnd
+    container_name: backend_container
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_SERVICE_URL=http://train-model:5000 # Communicates with train-model via internal DNS
+    depends_on:
+      - train-model
+
+  # 3. Frontend Service (e.g., React, Vue, Next.js)
+  frontend:
+    build: ./Frontend
+    container_name: frontend_container
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_API_URL=http://localhost:8000 # Accessible from the user's browser
+    depends_on:
+      - backend

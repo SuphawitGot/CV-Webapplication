@@ -8,4 +8,25 @@ dependencies = [
     "fastapi[standard]>=0.136.1",
     "python-multipart>=0.0.28",
     "uvicorn>=0.47.0",
+    "numpy>=1.26.0",
+    "opencv-python>=4.13.0.92",
+    "supervision>=0.28.0",
+    "ultralytics>=8.4.51",
+    "torch==2.6.0+cu124",
+    "torchvision==0.21.0+cu124",
+    "easyocr>=1.7.2",
+    "python-dotenv>=1.2.2",
 ]
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }

@@ -10,10 +10,16 @@ export default function AdminPage() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
   useEffect(() => {
-    fetch(`${API_URL}/`)
-        .then(r => r.json())
+    if (API_URL) {
+      fetch(`${API_URL}/`)
+        .then(r => {
+          if (!r.ok) throw new Error("Network response was not ok");
+          return r.json();
+        })
         .then(data => console.log(data))  // should print { message: "FastAPI is running" }
-}, []);
+        .catch(err => console.error("FastAPI ping failed:", err));
+    }
+  }, [API_URL]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
