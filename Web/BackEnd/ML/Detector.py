@@ -23,9 +23,8 @@ car_box    = None  # ← store last car box for cropping
 def process_frame(frame, is_running, is_paused):
     global car_in_crosswalk, midpoint_x, midpoint_y, car_box
 
-    success, frame = cap.read()
 
-    if not success or frame is None:
+    if frame is None:
         return None
     
     car       = model.track(frame, classes=[2], verbose=False, tracker="bytetrack.yaml")
@@ -62,7 +61,7 @@ def process_frame(frame, is_running, is_paused):
             conf = math.ceil(box.conf[0] * 100) / 100
             if conf > 0.5:
                 crosswalk_zone = np.array([[x1,y1],[x2,y1],[x2,y2],[x1,y2]], dtype=np.int32)
-                is_inside = cv2.pointPolygonTest(crosswalk_zone, (float(midpoint_x), float(midpoint_y)), False)
+                # is_inside = cv2.pointPolygonTest(crosswalk_zone, (float(midpoint_x), float(midpoint_y)), False)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
                 cv2.putText(frame, f"Crosswalk {conf}", (x1, y1 - 10),cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
@@ -80,6 +79,16 @@ def process_frame(frame, is_running, is_paused):
                         cv2.putText(frame, text, (bx1, by1 - 30),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
+# ← read frame OUTSIDE process_frame
+while cap.isOpened():
+    success, frame = cap.read()
+    if not success:
+        break
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
+        break
+    if key == ord('p'):
+        is_paused = not is_paused
+    if key == ord('r'):
+        is_running = not is_running
 
-    cv2.imshow('Webcam Feed', frame)
-    return frame

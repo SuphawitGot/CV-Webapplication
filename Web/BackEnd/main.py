@@ -1,10 +1,11 @@
+from Rounter import auth
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-# from ML.Detector import gg
+from database import engine
+from model import Base
 
-is_running = False
-is_paused  = False
 app = FastAPI()
+Base.metadata.create_all(bind=engine)  # ← creates tables automatically
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,3 +13,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.include_router(auth.router)
