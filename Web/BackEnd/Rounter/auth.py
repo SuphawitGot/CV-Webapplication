@@ -6,9 +6,6 @@ from typing import Annotated
 from model import User
 from passlib.context import CryptContext 
 
-SECRET_KEY = 'e5b81a4ba1f96761237b30889bb6c904aa9f3106638898dafd0a42a1dc95f627'
-ALGORITHM = 'HS256'
-
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
