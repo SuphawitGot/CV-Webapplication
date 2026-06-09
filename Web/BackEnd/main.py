@@ -1,6 +1,8 @@
+import os
 from Rounter import auth, detect
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from database import engine
 from model import Base
 
@@ -14,6 +16,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve captured violation images as static files at /captures/<filename>
+CAPTURE_DIR = os.path.join(os.path.dirname(__file__), "captures")
+os.makedirs(CAPTURE_DIR, exist_ok=True)
+app.mount("/captures", StaticFiles(directory=CAPTURE_DIR), name="captures")
 
 
 @app.get("/")
