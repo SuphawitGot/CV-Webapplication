@@ -1,35 +1,58 @@
-version: '3.8'
-
 services:
-  # 1. Machine Learning / Training Model Service
-  train-model:
-    build: ./Train_model
-    container_name: train_model_container
-    # If the training model needs to store models or data persistently:
-    volumes:
-      - ./Train_model/models:/app/models
-    # If it exposes an API (e.g. FastAPI / Flask for inference)
+  # ── PostgreSQL Database ──────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: cv_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: gotzh1234
+      POSTGRES_DB: UserDB
     ports:
-      - "5000:5000"
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-  # 2. Backend Service (e.g., Node.js, Python, Go)
+  # ── FastAPI Backend (YOLO + EasyOCR) ─────────────────────────────
   backend:
-    build: ./BackEnd
-    container_name: backend_container
+    build: ./Web/BackEnd
+    container_name: cv_backend
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
-      - MODEL_SERVICE_URL=http://train-model:5000 # Communicates with train-model via internal DNS
+      # Points to the 'db' service via Docker's internal DNS
+      DATABASE_URL: postgresql://postgres:gotzh1234@db:5432/UserDB
+    volumes:
+      # Persist uploaded videos and captured violation screenshots
+      - backend_uploads:/app/uploads
+      - backend_captures:/app/captures
+      - ml_captures:/app/ML/captures
     depends_on:
-      - train-model
+      db:
+        condition: service_healthy
 
-  # 3. Frontend Service (e.g., React, Vue, Next.js)
+  # ── Next.js Frontend ─────────────────────────────────────────────
   frontend:
-    build: ./Frontend
-    container_name: frontend_container
+    build:
+      context: ./Web/frontend
+      args:
+        # The browser calls the backend at this URL
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    container_name: cv_frontend
+    restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - BACKEND_API_URL=http://localhost:8000 # Accessible from the user's browser
     depends_on:
       - backend
+
+volumes:
+  postgres_data:
+  backend_uploads:
+  backend_captures:
+  ml_captures:

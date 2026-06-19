@@ -1,0 +1,31 @@
+# Ignore virtual environments
+.venv/
+__pycache__/
+*.py[oc]
+
+# Ignore build artifacts
+build/
+dist/
+wheels/
+*.egg-info
+
+# Ignore large test videos (they should be uploaded at runtime)
+ML/test-sample1.mp4
+ML/datasetcrosswalk/
+
+# Ignore IDE / editor files
+.vscode/
+.idea/
+.antigravitycli/
+
+# Ignore lock file (dependencies resolved at build time)
+uv.lock
+
+# Ignore uploads and captures (created at runtime)
+uploads/
+captures/
+ML/captures/
+
+# Git
+.git/
+.gitignore

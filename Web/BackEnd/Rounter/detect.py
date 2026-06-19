@@ -37,7 +37,7 @@ def _reader_thread(video_path: str):
     Honours _is_paused by skipping pushes while paused.
     """
     cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    fps = cap.get(cv2.CAP_PROP_FPS) or 60
     frame_delay = 1.0 / fps
 
     if not cap.isOpened():

@@ -15,11 +15,10 @@ from model import Violation
 
 model = None
 crosswalk_model = None
+plate_model = None
 
-# Cached OCR result so it doesn't block the pipeline
+# OCR reader (loaded in background)
 _ocr_reader = None
-_ocr_lock = threading.Lock()
-_ocr_busy = False
 
 # Detection scale – run YOLO on a downscaled frame for speed, draw on full-res
 DETECT_SCALE = 0.5
@@ -36,46 +35,85 @@ CAPTURE_COOLDOWN = 3.0       # seconds between captures for same/different car
 
 def init_models():
     """Load YOLO models once at startup."""
-    global model, crosswalk_model, _ocr_reader, _violations, _last_capture_time
+    global model, crosswalk_model, plate_model, _ocr_reader, _violations, _last_capture_time
     model = YOLO(os.path.join(BASE_DIR, "..", "yolo26n.pt"))
     crosswalk_model = YOLO(os.path.join(BASE_DIR, "best.pt"))
+    plate_model = YOLO(os.path.join(BASE_DIR, "LC.pt"))  # Licence plate detector
     _violations = []
     _last_capture_time = 0.0
     # Load EasyOCR lazily in background so startup is fast
     threading.Thread(target=_load_ocr, daemon=True).start()
 
 
+import numpy as np
+
 def _load_ocr():
     global _ocr_reader
     import easyocr
-    _ocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+    # ✅ Fix 1: Added 'th' for Thai licence plates
+    _ocr_reader = easyocr.Reader(['th', 'en'], gpu=False, verbose=False)
+
+
+def _preprocess_plate(crop):
+    """
+    ✅ Fix 2: Enlarge and sharpen the plate crop so OCR can read it better.
+    Small, blurry crops are the #1 reason OCR fails.
+    """
+    h, w = crop.shape[:2]
+
+    # Upscale small crops to at least 200px wide
+    if w < 200:
+        scale = 200 / w
+        crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+    # Convert to grayscale (removes color noise)
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+
+    # Increase contrast using CLAHE (adaptive histogram equalization)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    # Slight sharpening
+    kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    sharpened = cv2.filter2D(enhanced, -1, kernel)
+
+    return sharpened
 
 
 def _run_ocr_and_log(crop, filename: str, violation_id: int):
     """Read licence plate text in a background thread, then update the violation log."""
-    global _ocr_busy
-
-    with _ocr_lock:
-        if _ocr_busy or _ocr_reader is None:
-            return
-        _ocr_busy = True
 
     def _worker():
-        global _ocr_busy
         plate_text = ""
         try:
-            results = _ocr_reader.readtext(crop)
+            if _ocr_reader is None:
+                return
+
+            # ✅ Fix 2: Preprocess the plate image before OCR
+            processed = _preprocess_plate(crop)
+
+            results = _ocr_reader.readtext(processed)
             best_prob = 0.0
             for (_, text, prob) in results:
                 if prob > best_prob:
                     best_prob = prob
                     plate_text = text
-            if best_prob < 0.3:
+            if best_prob < 0.2:
                 plate_text = ""
-        finally:
-            _ocr_busy = False
 
-        final_plate = plate_text.upper() if plate_text else "—"
+            # Also try on the original color crop (sometimes works better)
+            if not plate_text:
+                results2 = _ocr_reader.readtext(crop)
+                for (_, text, prob) in results2:
+                    if prob > best_prob:
+                        best_prob = prob
+                        plate_text = text
+                if best_prob < 0.2:
+                    plate_text = ""
+        except Exception as e:
+            print(f"[Detector] OCR error: {e}")
+
+        final_plate = plate_text.upper().strip() if plate_text else "—"
 
         # Update in-memory violation entry
         with _violations_lock:
@@ -100,7 +138,34 @@ def _run_ocr_and_log(crop, filename: str, violation_id: int):
         finally:
             db.close()
 
+    # ✅ Fix 3: Always start OCR thread (no more skipping when busy)
     threading.Thread(target=_worker, daemon=True).start()
+
+
+def _detect_plate(car_crop):
+    """
+    Use LC.pt to detect the licence plate region within a car crop.
+    Returns the cropped plate image, or the full car_crop as fallback.
+    """
+    results = plate_model(car_crop, verbose=False)
+    best_box = None
+    best_conf = 0.0
+
+    for result in results:
+        for box in result.boxes:
+            conf = float(box.conf[0])
+            if conf > best_conf:
+                best_conf = conf
+                best_box = box
+
+    if best_box is not None and best_conf > 0.3:
+        px1, py1, px2, py2 = [int(v) for v in best_box.xyxy[0]]
+        plate_crop = car_crop[py1:py2, px1:px2]
+        if plate_crop.size > 0:
+            return plate_crop
+
+    # Fallback: return the full car crop if no plate detected
+    return car_crop
 
 
 def get_violations() -> list[dict]:
@@ -116,7 +181,7 @@ def process_frame(frame):
     • Draws bounding boxes + crosswalk boxes on the original full-res frame.
     • When a vehicle midpoint enters the crosswalk region, auto-captures and OCRs (with cooldown).
     Returns the annotated full-res frame.
-    """
+    """ 
     global _last_capture_time
 
     if frame is None:
@@ -160,6 +225,36 @@ def process_frame(frame):
             cv2.putText(frame, f"{label} {conf:.2f}", (x1, max(y1 - 10, 10)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (99, 49, 222), 2)
 
+            # ── Detect licence plate and draw bounding box ────────────────
+            car_crop = frame[y1:y2, x1:x2]
+            plate_crop = None
+            if car_crop.size > 0:
+                plate_results = plate_model(car_crop, verbose=False)
+                best_plate_box = None
+                best_plate_conf = 0.0
+                for pr in plate_results:
+                    for pb in pr.boxes:
+                        pc = float(pb.conf[0])
+                        if pc > best_plate_conf:
+                            best_plate_conf = pc
+                            best_plate_box = pb
+                if best_plate_box is not None and best_plate_conf > 0.3:
+                    # Plate coords relative to car crop → offset to full frame
+                    px1, py1_p, px2, py2_p = [int(v) for v in best_plate_box.xyxy[0]]
+                    abs_px1 = x1 + px1
+                    abs_py1 = y1 + py1_p
+                    abs_px2 = x1 + px2
+                    abs_py2 = y1 + py2_p
+                    # Draw cyan bounding box for licence plate
+                    cv2.rectangle(frame, (abs_px1, abs_py1), (abs_px2, abs_py2), (255, 255, 0), 2)
+                    cv2.putText(frame, f"Plate {best_plate_conf:.2f}",
+                                (abs_px1, max(abs_py1 - 8, 10)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 2)
+                    # Keep the plate crop for OCR
+                    plate_crop = car_crop[py1_p:py2_p, px1:px2]
+                    if plate_crop.size == 0:
+                        plate_crop = None
+
             # Midpoint: horizontal centre, vertical bottom of bounding box
             mid_x = (x1 + x2) // 2
             mid_y = y2
@@ -192,10 +287,10 @@ def process_frame(frame):
                         "timestamp": ts,
                     })
 
-                # Dispatch OCR on the car crop
-                crop = frame[y1:y2, x1:x2]
-                if crop.size > 0:
-                    _run_ocr_and_log(crop.copy(), filename, vid)
+                # Send plate crop (or car crop fallback) to OCR
+                ocr_crop = plate_crop if plate_crop is not None else car_crop
+                if ocr_crop is not None and ocr_crop.size > 0:
+                    _run_ocr_and_log(ocr_crop.copy(), filename, vid)
 
                 # Draw red alert flash on frame
                 cv2.putText(frame, "! VIOLATION CAPTURED !", (10, h - 20),
