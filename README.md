@@ -6,6 +6,8 @@ A full-stack computer vision prototype for detecting cars and motorcycles occupy
 
 Developed by **Suphawit Sudsang**, Computer Engineering, Rangsit University.
 
+![Showcase](Web/BackEnd/DemoCv.gif)
+
 ## Features
 
 - **Video upload:** Drag and drop a video or select a file to start detection.
